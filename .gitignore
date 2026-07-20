@@ -43,3 +43,14 @@ coverage/
 # We DO commit Dockerfiles and compose files.
 # Only ignore local overrides:
 compose.override.yaml
+
+# Yarn 4 (Berry) — we commit the pinned Yarn release itself
+.yarn/*
+!.yarn/patches
+!.yarn/plugins
+!.yarn/releases
+!.yarn/sdks
+!.yarn/versions
+.yarn/cache
+.yarn/install-state.gz
+.pnp.*
