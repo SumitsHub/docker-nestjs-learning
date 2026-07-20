@@ -9,7 +9,7 @@ import {
 import { ClientProxy } from '@nestjs/microservices';
 import { firstValueFrom } from 'rxjs';
 import { CreateUserDto, USERS_PATTERNS, UserDto } from '@app/common';
-import { USERS_CLIENT } from './users.module';
+import { USERS_CLIENT } from './users.tokens';
 
 @Controller('users')
 export class UsersController {

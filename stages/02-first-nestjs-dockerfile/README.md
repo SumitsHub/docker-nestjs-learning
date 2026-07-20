@@ -32,7 +32,8 @@ docker-nestjs-learning/
 │   │   │   ├── app.module.ts
 │   │   │   └── users/
 │   │   │       ├── users.controller.ts     ← HTTP → forwards to microservice
-│   │   │       └── users.module.ts
+│   │   │       ├── users.module.ts
+│   │   │       └── users.tokens.ts         ← injection token (avoids circular import)
 │   │   └── tsconfig.app.json
 │   └── users-service/
 │       ├── src/
@@ -231,7 +232,7 @@ Create three files at the repo root.
   "monorepo": true,
   "root": "apps/api-gateway",
   "compilerOptions": {
-    "webpack": false,
+    "webpack": true,
     "tsConfigPath": "apps/api-gateway/tsconfig.app.json"
   },
   "projects": {
@@ -266,10 +267,11 @@ Create three files at the repo root.
 }
 ```
 
-> **Note:** `"webpack": false` means we compile with plain `tsc`. Nest's default in monorepo mode is webpack (single-file bundle). We're using `tsc` because:
-> - The output is easier to read and layer-cache in Docker.
-> - Each app's `dist/apps/<name>/` is a normal folder of `.js` files, easy to `COPY` selectively.
-> - Simpler mental model for you today. We'll revisit webpack in Stage 5 when bundle size matters.
+> **Note on `"webpack": true`:** This is Nest's default builder in monorepo mode, and we're keeping it. Webpack bundles each app — including any path-aliased library code (`@app/common`) — into a **single** `dist/apps/<name>/main.js` file. Two reasons this matters for us:
+> - **Path aliases just work.** With plain `tsc` in a monorepo, `@app/common` resolution produces a nested output tree (`dist/apps/api-gateway/apps/api-gateway/src/main.js`) because tsc's `rootDir` becomes the common ancestor of all sources, which is the repo root. Webpack sidesteps that entirely.
+> - **A single `main.js` per app is Docker-friendly.** In Stage 3 we'll `COPY dist/apps/api-gateway/main.js` into the runtime image — one file, one layer, easy to reason about.
+>
+> Trade-off: webpack externalizes `node_modules`, so the container still needs `node_modules` alongside `main.js`. That's fine — we'll ship only production deps (`yarn workspaces focus --production` pattern) in Stage 3.
 
 ---
 
@@ -515,13 +517,21 @@ import { UsersModule } from './users/users.module';
 export class AppModule {}
 ```
 
+### `apps/api-gateway/src/users/users.tokens.ts`
+```ts
+// Injection token lives in its own file to avoid circular imports:
+// users.module.ts imports users.controller.ts, and users.controller.ts
+// needs this token. Colocating the token in either of those files causes
+// the token to be `undefined` at decorator-evaluation time.
+export const USERS_CLIENT = 'USERS_CLIENT';
+```
+
 ### `apps/api-gateway/src/users/users.module.ts`
 ```ts
 import { Module } from '@nestjs/common';
 import { ClientsModule, Transport } from '@nestjs/microservices';
 import { UsersController } from './users.controller';
-
-export const USERS_CLIENT = 'USERS_CLIENT';
+import { USERS_CLIENT } from './users.tokens';
 
 @Module({
   imports: [
@@ -558,7 +568,7 @@ import {
 import { ClientProxy } from '@nestjs/microservices';
 import { firstValueFrom } from 'rxjs';
 import { CreateUserDto, USERS_PATTERNS, UserDto } from '@app/common';
-import { USERS_CLIENT } from './users.module';
+import { USERS_CLIENT } from './users.tokens';
 
 @Controller('users')
 export class UsersController {

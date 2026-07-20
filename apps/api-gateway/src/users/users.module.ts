@@ -1,8 +1,7 @@
 import { Module } from '@nestjs/common';
 import { ClientsModule, Transport } from '@nestjs/microservices';
 import { UsersController } from './users.controller';
-
-export const USERS_CLIENT = 'USERS_CLIENT';
+import { USERS_CLIENT } from './users.tokens';
 
 @Module({
   imports: [
