@@ -1,0 +1,127 @@
+# ---------------------------------------------------------------------------
+# compose.yaml — Docker Compose file for the whole app stack.
+#
+# `docker compose up --build` brings up:
+#   - postgres      → durable storage for users-service (named volume)
+#   - redis         → key-value cache (service is up; code hooks come in Stage 6)
+#   - users-service → TCP microservice, writes to postgres via TypeORM
+#   - api-gateway   → public HTTP, forwards to users-service
+#
+# All four services live on a Compose-managed user-defined bridge network
+# and reach each other by SERVICE NAME (postgres, redis, users-service,
+# api-gateway). Same pattern as Kubernetes' Service DNS.
+# ---------------------------------------------------------------------------
+name: docker-nestjs-learning
+
+services:
+  # ─────────────────────────────────────────────────────────────────────────
+  # postgres — durable storage. Data lives in a named volume, not in the
+  # container's writable layer, so `compose down` + `compose up` keeps data.
+  # ─────────────────────────────────────────────────────────────────────────
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_DB: ${POSTGRES_DB:-appdb}
+    volumes:
+      # Named volume: Docker manages the storage location; survives
+      # `docker compose down`. Only `docker compose down -v` deletes it.
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      # `pg_isready` ships with the postgres image. Exit 0 = accepting
+      # connections. Compose polls this until healthy, then releases
+      # anything with `depends_on: condition: service_healthy`.
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-appdb}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 5s
+    ports:
+      # Optional: publish 5432 so you can `psql` from your laptop.
+      # Not needed by other services on this compose network —
+      # they reach postgres by name (`postgres:5432`).
+      - "${POSTGRES_PORT:-5432}:5432"
+
+  # ─────────────────────────────────────────────────────────────────────────
+  # redis — key/value store. Behind the `cache` profile so it's OPT-IN
+  # (won't start with a plain `docker compose up`). Two reasons:
+  #  1. Nothing in the app consumes it yet — Stage 6 wires it up.
+  #  2. Many devs already run a local redis on 6379; skipping avoids the
+  #     port conflict.
+  # Bring it up explicitly when needed:
+  #     docker compose --profile cache up -d redis
+  # Or:
+  #     docker compose --profile cache up --build
+  # ──────────────────────────────────────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    profiles: ["cache"]
+    restart: unless-stopped
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 3s
+    # No `ports:` here — other services on the compose network reach
+    # this redis by name (`redis:6379`). If you want host access, add
+    # a `ports: ["6380:6379"]` entry (6380 avoids conflict with your
+    # existing local redis on 6379).
+
+  # ─────────────────────────────────────────────────────────────────────────
+  # users-service — internal TCP microservice, owns the users table.
+  # ─────────────────────────────────────────────────────────────────────────
+  users-service:
+    build:
+      context: .
+      dockerfile: apps/users-service/Dockerfile
+    image: users-service:prod
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      USERS_SERVICE_HOST: 0.0.0.0
+      USERS_SERVICE_PORT: "4001"
+      DB_HOST: postgres          # Compose service DNS — resolves to postgres container
+      DB_PORT: "5432"
+      DB_USER: ${POSTGRES_USER:-postgres}
+      DB_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      DB_NAME: ${POSTGRES_DB:-appdb}
+    depends_on:
+      postgres:
+        # `service_healthy` waits until postgres's healthcheck is green.
+        # Without this, users-service would try to connect while postgres
+        # is still initializing and crash-loop.
+        condition: service_healthy
+
+  # ─────────────────────────────────────────────────────────────────────────
+  # api-gateway — public HTTP surface. Only externally-exposed service.
+  # ─────────────────────────────────────────────────────────────────────────
+  api-gateway:
+    build:
+      context: .
+      dockerfile: apps/api-gateway/Dockerfile
+    image: api-gateway:prod
+    restart: unless-stopped
+    ports:
+      - "${API_PORT:-3000}:3000"
+    environment:
+      NODE_ENV: production
+      PORT: "3000"
+      USERS_SERVICE_HOST: users-service   # ← Compose service name; DNS-resolved
+      USERS_SERVICE_PORT: "4001"
+    depends_on:
+      users-service:
+        # NestClientProxy TCP-connects lazily so `service_started` would
+        # be enough. `service_healthy` is stricter — waits until
+        # users-service's baked-in HEALTHCHECK is green.
+        condition: service_healthy
+
+# Named volumes managed by Docker. Persist across `docker compose down`.
+# Wiped by `docker compose down -v` (destructive).
+volumes:
+  postgres_data:
+  redis_data:
