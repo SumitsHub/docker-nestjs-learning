@@ -6,6 +6,7 @@ Grows with each stage:
 - **Stage 2** → local dev
 - **Stage 3** → per-service Docker images + user-defined network
 - **Stage 4** → Compose (4-service stack: postgres, redis, users-service, api-gateway)
+- **Stage 5** → image inspection & supply chain (dive, trivy, hadolint, distroless, digest pins, multi-arch, SBOM)
 - **Stage 9** (upcoming) → Kubernetes / `kind`
 
 ---
@@ -15,8 +16,10 @@ Grows with each stage:
 | Kind | Name | Notes |
 |---|---|---|
 | Image | `nestjs-gateway:naive` | Stage 2 — the deliberately-bad single-stage build |
-| Image | `api-gateway:prod` | Stage 3+ — production multi-stage build (also built by compose) |
-| Image | `users-service:prod` | Stage 3+ — production multi-stage build (also built by compose) |
+| Image | `api-gateway:prod` | Stage 3+ — production multi-stage build (alpine) |
+| Image | `api-gateway:distroless` | Stage 5 — distroless variant (nonroot uid 65532) |
+| Image | `users-service:prod` | Stage 3+ — production multi-stage build (alpine) |
+| Image | `users-service:distroless` | Stage 5 — distroless variant |
 | Container | `gw-prod` | Running `api-gateway:prod` (standalone) |
 | Container | `users-prod` | Running `users-service:prod` (standalone) |
 | Compose service | `postgres`, `users-service`, `api-gateway` | Stage 4 — DNS names on the compose network |
@@ -333,6 +336,109 @@ docker compose down -v && docker compose up --build -d && docker compose logs -f
 
 ---
 
+## Image inspection & supply chain (Stage 5)
+
+### `dive` — layer explorer
+
+```bash
+dive api-gateway:prod
+dive api-gateway:distroless
+
+# CI-friendly mode (fails if efficiency < 95%)
+CI=true dive --ci --lowestEfficiency=0.95 api-gateway:prod
+```
+
+### `trivy` — CVE / secret / misconfig scanner
+
+```bash
+# First run downloads the vuln DB (~200 MB); subsequent runs are fast
+trivy image api-gateway:prod
+trivy image --severity CRITICAL,HIGH api-gateway:prod
+trivy image --severity CRITICAL,HIGH api-gateway:distroless
+
+# Scan the Dockerfile source (misconfigs, no CVE data)
+trivy config apps/api-gateway/Dockerfile
+
+# Scan the whole repo (secrets, IaC)
+trivy fs .
+
+# JSON output for CI
+trivy image --format json --output /tmp/scan.json api-gateway:prod
+
+# Update the vuln DB manually
+trivy image --download-db-only
+```
+
+### `hadolint` — Dockerfile linter
+
+```bash
+hadolint apps/api-gateway/Dockerfile
+hadolint apps/users-service/Dockerfile
+hadolint --ignore DL3018 apps/api-gateway/Dockerfile   # skip specific rule
+```
+
+### Digest pinning
+
+```bash
+# Get the current digest of a tag
+docker image inspect node:22-alpine --format '{{index .RepoDigests 0}}'
+
+# Build with a pinned digest via our Dockerfile's NODE_IMAGE ARG
+docker build \
+  --build-arg NODE_IMAGE=node:22-alpine@sha256:16e22a550f... \
+  -f apps/api-gateway/Dockerfile \
+  -t api-gateway:pinned .
+```
+
+### Multi-arch buildx
+
+```bash
+# One-time: create a multi-platform builder
+docker buildx create --name multi --driver docker-container --use
+docker buildx inspect --bootstrap
+docker buildx ls
+
+# Build for both platforms (no --load / --push → cross-check only)
+docker buildx build \
+  --platform linux/amd64,linux/arm64 \
+  -f apps/api-gateway/Dockerfile \
+  -t api-gateway:multi .
+
+# Actual multi-arch push (Stage 8):
+#   ... --push -t ghcr.io/USER/api-gateway:v1.0.0 .
+```
+
+### SBOM (Software Bill of Materials)
+
+```bash
+# With buildx (attaches SBOM as image attestation)
+docker buildx build --sbom=true --provenance=true \
+  -f apps/api-gateway/Dockerfile -t api-gateway:with-sbom --load .
+
+# With syft (standalone tool, richer output)
+syft api-gateway:prod
+syft api-gateway:prod -o cyclonedx-json > /tmp/api-gateway.sbom.json
+syft api-gateway:prod -o spdx-json      > /tmp/api-gateway.sbom.spdx.json
+```
+
+### Distroless — build the variants
+
+```bash
+docker build -f apps/api-gateway/Dockerfile.distroless   -t api-gateway:distroless   .
+docker build -f apps/users-service/Dockerfile.distroless -t users-service:distroless .
+
+# Verify non-root uid
+docker container run --rm api-gateway:distroless \
+  /nodejs/bin/node -e 'console.log(process.getuid(), process.geteuid())'
+#   → 65532 65532
+
+# Prove no shell (this SHOULD fail on distroless)
+docker container run --rm --entrypoint sh api-gateway:distroless -c echo
+#   → exec /bin/sh: no such file or directory  ← the whole point
+```
+
+---
+
 ## Hit the API (via `curl`)
 
 Assumes `api-gateway` is reachable at `http://localhost:3000`.
@@ -465,8 +571,6 @@ docker system df             # how much disk is Docker using?
 docker system prune          # containers + networks + dangling images (moderate)
 docker system prune -a --volumes    # NUKE everything unused (careful)
 ```
-
----
 
 ## Git — the tags we set per stage
 

@@ -55,9 +55,11 @@ docker-nestjs-learning/
 ├── .env                        ← created locally from .env.example (gitignored)
 ├── apps/                       ← created in Stage 2
 │   ├── api-gateway/
-│   │   └── Dockerfile          ← Stage 3
+│   │   ├── Dockerfile          ← Stage 3 (alpine, prod default)
+│   │   └── Dockerfile.distroless  ← Stage 5 (alternative — distroless nonroot)
 │   └── users-service/
-│       └── Dockerfile          ← Stage 3
+│       ├── Dockerfile          ← Stage 3
+│       └── Dockerfile.distroless  ← Stage 5
 ├── libs/                       ← created in Stage 2
 │   └── common/
 ├── cheatsheets/                ← quick-reference, populated as we go
