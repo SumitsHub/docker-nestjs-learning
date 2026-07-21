@@ -49,9 +49,15 @@ docker-nestjs-learning/
 ├── .yarnrc.yml                 ← created in Stage 2 (nodeLinker: node-modules)
 ├── tsconfig.json               ← created in Stage 2
 ├── nest-cli.json               ← created in Stage 2
+├── .dockerignore               ← created in Stage 3 (build-context hygiene)
+├── compose.yaml                ← created in Stage 4 (4-service orchestration)
+├── .env.example                ← created in Stage 4 (committed template)
+├── .env                        ← created locally from .env.example (gitignored)
 ├── apps/                       ← created in Stage 2
 │   ├── api-gateway/
+│   │   └── Dockerfile          ← Stage 3
 │   └── users-service/
+│       └── Dockerfile          ← Stage 3
 ├── libs/                       ← created in Stage 2
 │   └── common/
 ├── cheatsheets/                ← quick-reference, populated as we go

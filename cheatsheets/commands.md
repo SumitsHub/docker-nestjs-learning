@@ -5,7 +5,7 @@ Quick-reference commands, organized by task. Grep this file; don't re-read the s
 Grows with each stage:
 - **Stage 2** → local dev
 - **Stage 3** → per-service Docker images + user-defined network
-- **Stage 4** (upcoming) → Compose
+- **Stage 4** → Compose (4-service stack: postgres, redis, users-service, api-gateway)
 - **Stage 9** (upcoming) → Kubernetes / `kind`
 
 ---
@@ -15,13 +15,20 @@ Grows with each stage:
 | Kind | Name | Notes |
 |---|---|---|
 | Image | `nestjs-gateway:naive` | Stage 2 — the deliberately-bad single-stage build |
-| Image | `api-gateway:prod` | Stage 3 — production multi-stage build |
-| Image | `users-service:prod` | Stage 3 — production multi-stage build |
-| Container | `gw-prod` | Running `api-gateway:prod` |
-| Container | `users-prod` | Running `users-service:prod` |
-| Network | `appnet` | User-defined bridge for cross-container DNS |
+| Image | `api-gateway:prod` | Stage 3+ — production multi-stage build (also built by compose) |
+| Image | `users-service:prod` | Stage 3+ — production multi-stage build (also built by compose) |
+| Container | `gw-prod` | Running `api-gateway:prod` (standalone) |
+| Container | `users-prod` | Running `users-service:prod` (standalone) |
+| Compose service | `postgres`, `users-service`, `api-gateway` | Stage 4 — DNS names on the compose network |
+| Compose service (opt-in) | `redis` (profile: `cache`) | Stage 4 — only starts with `docker compose --profile cache up` |
+| Compose project | `docker-nestjs-learning` | Prefix for network / volume names |
+| Volume | `docker-nestjs-learning_postgres_data` | Stage 4 — Postgres durability |
+| Volume | `docker-nestjs-learning_redis_data` | Stage 4 — Redis persistence |
+| Network | `appnet` | Stage 3 — manual user-defined bridge (deprecated once you're using Compose) |
 | Host port | `3000` | api-gateway HTTP |
 | Host port | `4001` | users-service TCP (only when testing users-service directly) |
+| Host port | `5432` | Postgres (published from compose for host `psql` access) |
+| Host port | `6379` | Redis (published from compose for host `redis-cli` access) |
 
 ---
 
@@ -236,6 +243,96 @@ In Stage 4, Compose creates a user-defined network for you automatically and use
 
 ---
 
+## Docker Compose — the full stack in one command
+
+Everything below assumes you're in the repo root (where `compose.yaml` lives).
+
+### First-time setup
+
+```bash
+# Copy the env template to a real .env (gitignored)
+cp .env.example .env
+# Edit .env if you want non-default POSTGRES_PASSWORD etc.
+```
+
+### Bring the stack up
+
+```bash
+docker compose up --build           # build+start; foreground (Ctrl-C stops)
+docker compose up --build -d        # ...detached
+docker compose ps                   # show running services + health
+docker compose config               # dry-run: expand ${VAR} and validate syntax
+docker compose config --services    # list service names only
+```
+
+### Profiles — opt-in services
+
+Services with a `profiles: [name]` in `compose.yaml` are skipped unless you name the profile. Our `redis` service is behind `cache`:
+
+```bash
+docker compose --profile cache up --build          # include redis
+docker compose --profile cache up -d redis         # start ONLY redis (from profile)
+docker compose --profile cache config --services   # confirm what's included
+docker compose --profile cache down                # tear down services under that profile too
+```
+
+Multiple profiles: repeat the flag → `--profile cache --profile devtools ...`.
+
+### Tail logs
+
+```bash
+docker compose logs -f              # all services
+docker compose logs -f users-service        # one service
+docker compose logs --tail 50 postgres      # last N lines of one service
+docker compose logs --since 2m              # last 2 minutes across all
+```
+
+### Poke at a running service
+
+```bash
+docker compose exec users-service sh                     # shell
+docker compose exec postgres psql -U postgres -d appdb   # one-off psql
+docker compose exec redis redis-cli                      # redis interactive
+docker compose exec postgres pg_isready -U postgres      # manual healthcheck
+```
+
+### Restart / stop / start
+
+```bash
+docker compose restart api-gateway   # bounce one service
+docker compose stop                  # stop all, KEEP containers + volumes
+docker compose start                 # resume stopped containers
+docker compose down                  # stop + remove containers + network (keep volumes)
+docker compose down -v               # ...and DELETE named volumes (destructive)
+```
+
+### Rebuild after code changes
+
+```bash
+docker compose up --build             # rebuild changed images, restart affected
+docker compose build --no-cache users-service   # force full rebuild of one service
+docker compose pull                   # fetch newer base images (postgres, redis)
+```
+
+### Inspect databases from the host
+
+```bash
+# Postgres — .env's POSTGRES_PORT is published to the host
+psql -h localhost -U postgres -d appdb -c 'SELECT * FROM users;'
+
+# Redis — .env's REDIS_PORT is published to the host
+redis-cli -h localhost -p 6379 PING
+```
+
+### One-liner: nuke & repave
+
+```bash
+# Full reset — destroys DB data too
+docker compose down -v && docker compose up --build -d && docker compose logs -f
+```
+
+---
+
 ## Hit the API (via `curl`)
 
 Assumes `api-gateway` is reachable at `http://localhost:3000`.
@@ -392,3 +489,5 @@ git log --grep 'stage-03' --oneline   # show all commits from a stage
 | `docker container exec X ps -o pid,user,cmd` fails | Alpine's BusyBox `ps` doesn't have `-o cmd` | Use `-o args` |
 | `nest can't resolve dependencies of UsersController` | Circular import via injection token | Move token to its own `*.tokens.ts` file |
 | Compiled main.js not at `dist/apps/<app>/main.js` | `webpack: false` + monorepo path aliases | Set `webpack: true` in `nest-cli.json` |
+| `getaddrinfo EAI_AGAIN <container-name>` | Old container is still running on an old network, looking for a peer that no longer exists on that network | `docker container rm -f <old>` + `docker network rm <old-net>`, then bring up the current stack |
+| `docker compose up` seems to succeed but only some services start | A leftover container from a previous stage is squatting on a host port (e.g. `3000`) that Compose wants to bind | Tear down the older stack (see runbook § Cleanup) before `compose up` |
