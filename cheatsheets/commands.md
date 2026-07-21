@@ -175,6 +175,67 @@ docker network rm appnet
 
 ---
 
+## Networking modes — which one and why
+
+Every way you can connect two containers, and why we pick the user-defined bridge.
+
+| Mode | Peer discovery | Works cross-OS? | Isolation | K8s-aligned? |
+|---|---|---|---|---|
+| **User-defined bridge** (what we use) | ✅ by container name via embedded DNS | ✅ | ✅ | ✅ mirrors `ClusterIP` Service |
+| Default `bridge` (no `--network`) | ❌ IP only, no name DNS | ✅ | ✅ | ❌ |
+| Publish to host + `host.docker.internal` | ✅ but via extra host hop | ⚠️ needs different flag on Linux vs Desktop | ⚠️ exposes internal service on host | ❌ |
+| `--network host` | ✅ everything is `localhost` | ❌ Linux-only | ❌ shared with host | ❌ |
+| `--link` (deprecated) | ✅ | ✅ | ✅ | ❌ — do not use |
+
+### The failure modes to recognize
+
+**Default bridge — DNS doesn't work by name.** Docker's built-in `bridge` network deliberately omits name resolution (legacy behavior).
+
+```bash
+docker container run -d --name users-prod users-service:prod
+docker container run -d --name gw-prod -p 3000:3000 \
+  -e USERS_SERVICE_HOST=users-prod \
+  api-gateway:prod
+
+curl http://localhost:3000/users
+#   → ECONNREFUSED / 500 — "users-prod" doesn't resolve to an IP
+#   Workaround (bad): docker inspect users-prod → grab IP → pass as env
+#   The IP changes on every restart.
+```
+
+**Host-loopback workarounds** — flag differs by platform, so scripts break:
+
+```bash
+# Docker Desktop (Mac / Windows / WSL2 with the DD backend)
+docker container run -d --name users-prod -p 4001:4001 users-service:prod
+docker container run -d --name gw-prod -p 3000:3000 \
+  -e USERS_SERVICE_HOST=host.docker.internal \
+  api-gateway:prod
+
+# Plain Linux Docker Engine — host.docker.internal doesn't exist by default
+docker container run -d --name gw-prod -p 3000:3000 \
+  --add-host=host.docker.internal:host-gateway \
+  -e USERS_SERVICE_HOST=host.docker.internal \
+  api-gateway:prod
+```
+
+Works, but you've now exposed `users-service` on the host (`-p 4001:4001`) for no operational reason, and you added a network hop (container → host → container).
+
+**`--network host`** — Linux-only, kills isolation, port collisions with anything else on the host. Avoid.
+
+### Why user-defined bridge maps 1:1 to Kubernetes
+
+| Property | Docker user-defined bridge | Kubernetes |
+|---|---|---|
+| Reach peer by *name*, not IP | container name | `Service` name |
+| Peer's IP changes silently → clients keep working | ✅ via embedded DNS | ✅ via kube-dns / CoreDNS |
+| Internal service stays internal (no port publish) | ✅ (skip `-p`) | ✅ (`ClusterIP`) |
+| Same env var works on laptop + prod | `USERS_SERVICE_HOST=users-prod` | `USERS_SERVICE_HOST=users-service` |
+
+In Stage 4, Compose creates a user-defined network for you automatically and uses the *service name* as the DNS name. In Stage 9, Kubernetes creates a `Service` and the *Service name* is the DNS name. Same mental model, three layers.
+
+---
+
 ## Hit the API (via `curl`)
 
 Assumes `api-gateway` is reachable at `http://localhost:3000`.
