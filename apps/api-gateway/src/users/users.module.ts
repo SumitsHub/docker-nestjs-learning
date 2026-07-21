@@ -1,4 +1,5 @@
 import { Module } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { ClientsModule, Transport } from '@nestjs/microservices';
 import { UsersController } from './users.controller';
 import { USERS_CLIENT } from './users.tokens';
@@ -8,11 +9,12 @@ import { USERS_CLIENT } from './users.tokens';
     ClientsModule.registerAsync([
       {
         name: USERS_CLIENT,
-        useFactory: () => ({
+        inject: [ConfigService],
+        useFactory: (cfg: ConfigService) => ({
           transport: Transport.TCP,
           options: {
-            host: process.env.USERS_SERVICE_HOST ?? '127.0.0.1',
-            port: Number(process.env.USERS_SERVICE_PORT ?? 4001),
+            host: cfg.get<string>('USERS_SERVICE_HOST', '127.0.0.1'),
+            port: Number(cfg.get<string>('USERS_SERVICE_PORT', '4001')),
           },
         }),
       },
