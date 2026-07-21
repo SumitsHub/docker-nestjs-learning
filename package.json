@@ -15,18 +15,23 @@
   },
   "dependencies": {
     "@nestjs/common": "^11",
+    "@nestjs/config": "^4.0.4",
     "@nestjs/core": "^11",
     "@nestjs/microservices": "^11",
     "@nestjs/platform-express": "^11",
+    "@nestjs/typeorm": "^11.0.3",
     "class-transformer": "^0.5",
     "class-validator": "^0.14",
+    "pg": "^8.22.0",
     "reflect-metadata": "^0.2",
-    "rxjs": "^7"
+    "rxjs": "^7",
+    "typeorm": "^1.1.0"
   },
   "devDependencies": {
     "@nestjs/cli": "^11",
     "@nestjs/schematics": "^11",
     "@types/node": "^22",
+    "@types/pg": "^8.20.0",
     "ts-loader": "^9",
     "ts-node": "^10",
     "tsconfig-paths": "^4",
