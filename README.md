@@ -47,7 +47,6 @@ docker-nestjs-learning/
 ├── package.json                ← created in Stage 2 (pins Yarn 4 via "packageManager")
 ├── yarn.lock                   ← created in Stage 2 (deterministic deps for laptop + CI + Docker)
 ├── .yarnrc.yml                 ← created in Stage 2 (nodeLinker: node-modules)
-├── .yarn/releases/             ← created in Stage 2 (the pinned yarn-4.x.x.cjs — committed)
 ├── tsconfig.json               ← created in Stage 2
 ├── nest-cli.json               ← created in Stage 2
 ├── apps/                       ← created in Stage 2
@@ -72,7 +71,7 @@ docker-nestjs-learning/
     └── 09-bridge-to-kubernetes/
 ```
 
-**Package manager:** Yarn 4, activated via Corepack (built into Node 22). The exact Yarn release is committed under `.yarn/releases/` and pinned in `package.json`'s `packageManager` field. This means every environment — your laptop, a teammate, CI, and every Docker build stage — uses bit-identical Yarn.
+**Package manager:** Yarn 4, activated via Corepack (built into Node 22). The exact Yarn release is pinned in `package.json`'s `packageManager` field; Corepack downloads that exact version on demand and caches it in `~/.cache/node/corepack/`. Every environment — your laptop, a teammate, CI, and every Docker build stage — ends up running bit-identical Yarn.
 
 Each stage folder contains:
 

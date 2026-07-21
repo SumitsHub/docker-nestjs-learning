@@ -84,8 +84,8 @@ cat > package.json <<'EOF'
 EOF
 
 # 3. Pin Yarn to the current stable release for THIS repo.
-#    This writes "packageManager": "yarn@4.x.x" into package.json
-#    and downloads that exact Yarn release into .yarn/releases/.
+#    This writes "packageManager": "yarn@4.x.x" into package.json.
+#    Corepack will download that exact yarn on first use.
 corepack use yarn@stable
 
 # 4. Use the classic node_modules layout (not Yarn's PnP).
@@ -101,9 +101,10 @@ Verify:
 ```bash
 yarn --version           # should print 4.x.x
 cat package.json | grep packageManager
-ls .yarn/releases/       # a single yarn-4.x.x.cjs file — this ships with the repo
 cat .yarnrc.yml          # should contain nodeLinker: node-modules
 ```
+
+> **Note on `.yarn/releases/`:** Modern Corepack (0.30+) manages Yarn without needing a `.yarn/releases/yarn-4.x.x.cjs` binary committed to the repo. The `packageManager` field in `package.json` (e.g. `yarn@4.17.1+sha512.…`) is the pin — Corepack downloads that exact yarn from `repo.yarnpkg.com` on first use and caches it in `~/.cache/node/corepack/`. In Stage 3 the container image does the same. If you ever need a fully-offline / hermetic build, you can vendor the binary later (`yarn set version 4.17.1` on older Yarn) — Stage 5 revisits this for supply-chain hardening.
 
 Now install deps:
 
@@ -174,7 +175,7 @@ Finally, extend `.gitignore` with Yarn's recommended entries. Append to the exis
 .pnp.*
 ```
 
-Commit `.yarnrc.yml`, `.yarn/releases/yarn-4.x.x.cjs`, `package.json`, and `yarn.lock`. Those four files together mean anyone who clones + runs `yarn install` gets bit-identical dependencies — the same guarantee we'll rely on in the Docker build stage in Stage 3.
+Commit `.yarnrc.yml`, `package.json`, and `yarn.lock`. Those three files (with `packageManager` in `package.json` acting as the yarn version pin) mean anyone who clones + runs `yarn install` gets bit-identical dependencies — the same guarantee we'll rely on in the Docker build stage in Stage 3.
 
 ---
 
