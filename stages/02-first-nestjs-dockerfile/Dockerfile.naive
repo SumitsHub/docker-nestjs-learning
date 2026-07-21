@@ -1,0 +1,90 @@
+# ---------------------------------------------------------------------------
+# Dockerfile.naive — a DELIBERATELY BAD Dockerfile for the api-gateway.
+#
+# Part of Stage 2's "do it wrong, feel the pain, then fix" exercise.
+# Stage 3 replaces this with a proper multi-stage, slim, non-root,
+# signal-safe build. Do NOT copy this pattern anywhere near production.
+#
+# Read the inline comments — each one calls out a specific anti-pattern
+# and names the Stage where we fix it.
+# ---------------------------------------------------------------------------
+
+# FROM picks the base image. This is layer 0 — every layer we add stacks
+# on top. `node:22-alpine` = Node.js 22 on Alpine Linux (~180 MB total).
+#
+# ANTI-PATTERN #1 (small one): pinning by *tag* only. Tags are mutable —
+# whoever owns `node:22-alpine` on Docker Hub can retag it tomorrow.
+# In Stage 5 we'll switch to `node:22-alpine@sha256:<digest>` for
+# reproducibility (a K8s admission controller would insist on this).
+FROM node:22-alpine
+
+# WORKDIR sets the working directory for every subsequent RUN/COPY/CMD.
+# Creates /app if it doesn't exist. All later paths are relative to /app.
+WORKDIR /app
+
+# Corepack ships with Node 22 and manages package-manager versions.
+# `corepack enable` installs the yarn/pnpm shims into $PATH inside the
+# image. The exact yarn version comes from package.json's "packageManager"
+# field once we COPY it in — so the container's yarn == your laptop's yarn.
+RUN corepack enable
+
+# ANTI-PATTERN #2: `COPY . .` copies the ENTIRE build context (everything
+# in the repo root) into /app. Without a .dockerignore, that includes:
+#   - node_modules from your host (potentially wrong platform / stale)
+#   - .git/ history
+#   - stages/**, README.md, LEARNING-APPROACH.md (all our docs)
+#   - dist/ from a previous local build
+#   - Any .env you accidentally left lying around
+# We fix this in Stage 3 with a curated .dockerignore + narrow COPYs.
+COPY . .
+
+# ANTI-PATTERN #3: install EVERY dependency, including devDependencies
+# (nest CLI, ts-loader, typescript, @types/node, webpack, etc.).
+# We NEED devDeps to build, but we do NOT need them at runtime.
+# In this single-stage image there's no way to drop them — they ship to
+# production. Stage 3 uses a multi-stage build so runtime deps are the
+# only thing in the final image.
+#
+# --immutable = container equivalent of `npm ci --frozen-lockfile`:
+# refuses to modify yarn.lock, so the install is bit-reproducible.
+RUN yarn install --immutable
+
+# ANTI-PATTERN #4: build BOTH apps even though this image only runs
+# api-gateway. `yarn build` compiles dist/apps/api-gateway/main.js AND
+# dist/apps/users-service/main.js. The users-service bundle is dead
+# weight in a container that will never execute it. Stage 3 will build
+# only the app we're about to run.
+RUN yarn build
+
+# EXPOSE is DOCUMENTATION ONLY. It does NOT publish the port to the host.
+# It just hints to humans (and to `docker run -P`) that this container
+# listens on 3000. Runtime publishing still needs `docker run -p 3000:3000`.
+EXPOSE 3000
+
+# ANTI-PATTERN #5: `yarn start:prod:gateway` means yarn runs as PID 1
+# and spawns node as a child. Two related risks live here:
+#
+#   a) SIGNAL PROPAGATION. Historically (npm, yarn 1) the wrapper would
+#      NOT forward SIGTERM to the child — so `docker stop` waited ~10 s
+#      for grace, then SIGKILLed. Yarn 4 (Berry) actually DOES forward
+#      SIGTERM, so in practice this stop is fast (~1 s). Good — but
+#      don't rely on wrapper behavior; run node directly in prod.
+#
+#   b) GRACEFUL SHUTDOWN. Fast stop ≠ graceful stop. Even with signals
+#      forwarded, this Nest app calls neither `app.enableShutdownHooks()`
+#      nor closes its HTTP server on SIGTERM. So node just exits and:
+#        - in-flight HTTP requests are dropped mid-response
+#        - the ClientProxy TCP connection to users-service is abandoned
+#        - (Stage 4) Postgres/Redis connections don't say goodbye
+#      In Kubernetes, that means every rolling update briefly shows 502s.
+#
+# Stage 3 fixes (a) by using `CMD ["node", "dist/apps/api-gateway/main"]`
+# so node is PID 1 and there's no wrapper in the picture at all.
+# Stage 6 fixes (b) by calling app.enableShutdownHooks() and adding a
+# `/livez` + `/readyz` for K8s probes.
+#
+# ALSO MISSING (each fixed in the noted stage):
+#   - USER directive          → Stage 3 (non-root)
+#   - HEALTHCHECK             → Stage 3 (Docker) & Stage 6 (K8s probes)
+#   - init/tini for reaping   → Stage 3
+CMD ["yarn", "start:prod:gateway"]

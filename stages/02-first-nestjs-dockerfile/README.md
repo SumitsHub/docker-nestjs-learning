@@ -646,14 +646,17 @@ Now the point of this stage. Create `stages/02-first-nestjs-dockerfile/Dockerfil
 **Rules for this "wrong" Dockerfile:**
 - Single stage (one `FROM`).
 - Copy *everything* into the image with a broad `COPY . .`.
-- Install *all* dependencies (including devDependencies).
+- Install *all* dependencies (including devDependencies) using yarn.
 - Build both apps (even though we're only running the gateway).
-- Run the gateway with `CMD ["npm", "run", "start:prod:gateway"]`.
+- Run the gateway with `CMD ["yarn", "start:prod:gateway"]`.
 - No `.dockerignore`. No non-root user. No HEALTHCHECK. No multi-stage.
 
 Hints (you should still write it yourself):
 - Base image: `node:22-alpine` — the version *tag* matters; we'll discuss pinning digests later.
 - `WORKDIR /app`.
+- `RUN corepack enable` before you install, so the yarn version pinned in `package.json`'s `packageManager` field is available inside the container. (Same Corepack habit as your laptop.)
+- Use `yarn install --immutable` — the immutable flag forbids changes to `yarn.lock` during install, which is the container-equivalent of `npm ci`.
+- Use `yarn build` to compile both apps.
 - Expose the port your gateway listens on.
 
 Once written, build and inspect it from the **repo root** (not the stage folder — the build context is the whole monorepo):
@@ -680,8 +683,8 @@ docker container stop gw-naive
 
 **Now measure the pain — record these in [NOTES.md](NOTES.md):**
 
-1. **Image size in MB** — probably 800 MB → 1.4 GB. Compare to `docker image ls node:22-alpine` (~180 MB).
-2. **Time from `docker stop` to actual stop** — likely ~10 seconds. Why? (Hint: revisit Stage 1's "PID 1 signals" experiment.)
+1. **Image size in MB** — probably 350 MB → 500 MB depending on your caches. Compare to `docker image ls node:22-alpine` (~180 MB).
+2. **Time from `docker stop` to actual stop** — with Yarn 4 as CMD this is usually **fast** (~1 s), because Yarn 4 forwards SIGTERM cleanly. That's better than the old npm/yarn-1 world where you'd see ~10 s. **But fast ≠ graceful:** without `app.enableShutdownHooks()` in Nest, in-flight HTTP requests are dropped and connections never say goodbye. Stage 3 uses `CMD ["node", …]` directly (no wrapper) and Stage 6 adds the shutdown hook.
 3. **What's inside** — run `docker image history nestjs-gateway:naive` and identify the biggest layers. What's making the image huge?
 4. **What would happen if you `docker exec` in and check `/app`?** Do it: `docker container run --rm -it nestjs-gateway:naive sh` and browse. Are your source `.ts` files there? `node_modules` with devDeps? Tests? Secrets we haven't set yet but might have accidentally copied later?
 

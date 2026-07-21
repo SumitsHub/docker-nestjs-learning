@@ -25,15 +25,15 @@
 
 | Metric | Value | Reflection |
 |---|---|---|
-| Image size (MB) | | |
-| Time from `docker stop` to actual exit | | |
-| Biggest single layer + what it contains | | |
-| Is `node_modules` in the image? Includes devDeps? | | |
-| Are `.ts` source files present? | | |
-| Are tests, README, `.git`, docs present? | | |
+| Image size (MB) | 398 | |
+| Time from `docker stop` to actual exit | 0.76s | Fast — Yarn 4 forwards SIGTERM, but not graceful: no shutdown hooks in Nest |
+| Biggest single layer + what it contains | 149MB, node | |
+| Is `node_modules` in the image? Includes devDeps? | YES | |
+| Are `.ts` source files present? | YES | |
+| Are tests, README, `.git`, docs present? | YES | |
 
 ## What I'd fix if I could only fix one thing
--
+- size
 
 ## K8s implications I want to remember
 - **Image size ↔ rollout speed.** A 1.4 GB image pulled to N nodes = N × 1.4 GB of bandwidth + disk. Rolling updates get slow, autoscaling gets slow, node churn gets expensive.
