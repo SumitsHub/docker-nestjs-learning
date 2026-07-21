@@ -55,6 +55,7 @@ docker-nestjs-learning/
 ├── libs/                       ← created in Stage 2
 │   └── common/
 ├── cheatsheets/                ← quick-reference, populated as we go
+│   ├── commands.md             ← project runbook — build / run / debug / cleanup
 │   ├── docker-cli.md
 │   ├── dockerfile.md
 │   └── compose.md
