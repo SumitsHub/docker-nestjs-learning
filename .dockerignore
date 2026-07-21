@@ -1,0 +1,68 @@
+# ---------------------------------------------------------------------------
+# .dockerignore — files EXCLUDED from Docker's build context.
+#
+# The build context is EVERYTHING in the directory you pass as the last
+# arg to `docker build`. Anything matched here is never sent to the
+# Docker daemon, which means:
+#   - faster builds (less to transfer)
+#   - no accidental leaks of .env/.git/editor files into images
+#   - no host node_modules poisoning the container install
+#
+# Syntax is the same as .gitignore.
+# ---------------------------------------------------------------------------
+
+# --- Version control ---
+.git
+.gitignore
+.gitattributes
+
+# --- Node runtime & installs (the container makes its own) ---
+node_modules
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# --- Yarn 4 (Berry) caches / installer state ---
+# We deliberately KEEP .yarn/releases (the pinned yarn binary) and
+# .yarnrc.yml — the container's Corepack needs both to select and
+# run the exact yarn version pinned in package.json.
+.yarn/*
+!.yarn/releases
+!.yarn/patches
+!.yarn/plugins
+.pnp.*
+.yarn/cache
+.yarn/install-state.gz
+
+# --- Build output — the container recompiles this ---
+dist
+build
+*.tsbuildinfo
+
+# --- Env & secrets — must NEVER enter an image ---
+.env
+.env.*
+!.env.example
+
+# --- IDE / editor / OS ---
+.vscode
+.idea
+*.swp
+.DS_Store
+Thumbs.db
+
+# --- Coverage / test artifacts ---
+coverage
+.nyc_output
+
+# --- Docker files & compose (no need to bundle them into the image) ---
+Dockerfile*
+compose*.yaml
+docker-compose*.yaml
+.dockerignore
+
+# --- Repo documentation — the container doesn't need our notes ---
+README.md
+LEARNING-APPROACH.md
+stages
+cheatsheets
