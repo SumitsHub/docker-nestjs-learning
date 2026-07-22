@@ -1,0 +1,82 @@
+### =====================================================================
+### REST Client requests for docker-nestjs-learning
+###
+### Requires the "REST Client" VS Code extension (humao.rest-client).
+### Send a request by clicking the "Send Request" codelens above each
+### block, or with Ctrl+Alt+R (Cmd+Alt+R on macOS).
+###
+### The api-gateway is the only externally-exposed service. Everything
+### else (users-service TCP, postgres, redis) is internal to the compose
+### network. Default host port is 3000 (override via API_PORT in .env).
+### =====================================================================
+
+@host = http://localhost:3000
+@contentType = application/json
+
+### ---------------------------------------------------------------------
+### Health — liveness. Should always return { status: "ok" } as long as
+### the Nest process is up. Safe for K8s livenessProbe.
+### ---------------------------------------------------------------------
+GET {{host}}/livez
+
+### ---------------------------------------------------------------------
+### Health — readiness. Pings users-service (TCP) + redis. Returns 503
+### if any downstream is down. Safe for K8s readinessProbe.
+### ---------------------------------------------------------------------
+GET {{host}}/readyz
+
+### ---------------------------------------------------------------------
+### Users — create. Forwards to users-service over TCP, which persists
+### to postgres via TypeORM. Response is the created UserDto (with id).
+### The `@name createUser` lets later requests reuse the returned id.
+### ---------------------------------------------------------------------
+# @name createUser
+POST {{host}}/users
+Content-Type: {{contentType}}
+
+{
+  "name": "Ada1 Lovelace",
+  "email": "ada1@example.com"
+}
+
+### ---------------------------------------------------------------------
+### Users — list all.
+### ---------------------------------------------------------------------
+GET {{host}}/users
+
+### ---------------------------------------------------------------------
+### Users — find one by id. Uses the id returned from the createUser
+### request above. Send `createUser` first, then this one.
+### ---------------------------------------------------------------------
+GET {{host}}/users/{{createUser.response.body.id}}
+
+### ---------------------------------------------------------------------
+### Users — find one by explicit id (edit as needed).
+### ---------------------------------------------------------------------
+GET {{host}}/users/00000000-0000-0000-0000-000000000000
+
+### ---------------------------------------------------------------------
+### Users — validation failure example. `name` is too short and `email`
+### is not a valid email → global ValidationPipe returns 400 with the
+### class-validator error messages.
+### ---------------------------------------------------------------------
+POST {{host}}/users
+Content-Type: {{contentType}}
+
+{
+  "name": "A",
+  "email": "not-an-email"
+}
+
+### ---------------------------------------------------------------------
+### Users — forbidNonWhitelisted example. Extra properties (`role`)
+### are rejected by the ValidationPipe (whitelist + forbidNonWhitelisted).
+### ---------------------------------------------------------------------
+POST {{host}}/users
+Content-Type: {{contentType}}
+
+{
+  "name": "Grace Hopper",
+  "email": "grace@example.com",
+  "role": "admin"
+}
