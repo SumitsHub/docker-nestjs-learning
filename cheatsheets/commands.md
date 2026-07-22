@@ -7,6 +7,7 @@ Grows with each stage:
 - **Stage 3** → per-service Docker images + user-defined network
 - **Stage 4** → Compose (4-service stack: postgres, redis, users-service, api-gateway)
 - **Stage 5** → image inspection & supply chain (dive, trivy, hadolint, distroless, digest pins, multi-arch, SBOM)
+- **Stage 6** → K8s-ready wiring (Joi config, pino JSON logs, /livez /readyz, throttler, graceful shutdown, redis client)
 - **Stage 9** (upcoming) → Kubernetes / `kind`
 
 ---
@@ -22,8 +23,7 @@ Grows with each stage:
 | Image | `users-service:distroless` | Stage 5 — distroless variant |
 | Container | `gw-prod` | Running `api-gateway:prod` (standalone) |
 | Container | `users-prod` | Running `users-service:prod` (standalone) |
-| Compose service | `postgres`, `users-service`, `api-gateway` | Stage 4 — DNS names on the compose network |
-| Compose service (opt-in) | `redis` (profile: `cache`) | Stage 4 — only starts with `docker compose --profile cache up` |
+| Compose service | `postgres`, `redis`, `users-service`, `api-gateway` | Stage 4+ — DNS names on the compose network (Stage 6 activated redis by default) |
 | Compose project | `docker-nestjs-learning` | Prefix for network / volume names |
 | Volume | `docker-nestjs-learning_postgres_data` | Stage 4 — Postgres durability |
 | Volume | `docker-nestjs-learning_redis_data` | Stage 4 — Redis persistence |
@@ -270,16 +270,15 @@ docker compose config --services    # list service names only
 
 ### Profiles — opt-in services
 
-Services with a `profiles: [name]` in `compose.yaml` are skipped unless you name the profile. Our `redis` service is behind `cache`:
+Services with a `profiles: [name]` in `compose.yaml` are skipped unless you name the profile. (Stage 6 removed the last one — `redis` now starts by default. If you later add a devtools profile for something like `adminer`, the same commands apply.)
 
 ```bash
-docker compose --profile cache up --build          # include redis
-docker compose --profile cache up -d redis         # start ONLY redis (from profile)
-docker compose --profile cache config --services   # confirm what's included
-docker compose --profile cache down                # tear down services under that profile too
+docker compose --profile devtools up --build          # include devtools-profile services
+docker compose --profile devtools config --services   # confirm what's included
+docker compose --profile devtools down                # tear down services under that profile too
 ```
 
-Multiple profiles: repeat the flag → `--profile cache --profile devtools ...`.
+Multiple profiles: repeat the flag → `--profile a --profile b ...`.
 
 ### Tail logs
 
@@ -468,12 +467,42 @@ curl -sS "http://localhost:3000/users/does-not-exist" | jq
 curl -sS -o /dev/null -w "HTTP %{http_code}\n" http://localhost:3000/users
 ```
 
-One-liner smoke test after any change:
+# One-liner smoke test after any change:
 
 ```bash
 curl -sS -X POST http://localhost:3000/users -H 'content-type: application/json' \
   -d '{"name":"Smoke","email":"smoke@t.io"}' | jq .id \
   && curl -sS http://localhost:3000/users | jq 'length'
+```
+
+### Health probes (Stage 6)
+
+```bash
+# Liveness — process alive?
+curl -sS http://localhost:3000/livez  | jq
+
+# Readiness — upstream deps reachable? (users-service TCP + redis)
+curl -sS http://localhost:3000/readyz | jq
+
+# Status-only
+curl -sS -o /dev/null -w "livez: %{http_code}\nreadyz: %{http_code}\n" \
+  http://localhost:3000/livez  \
+  http://localhost:3000/readyz
+
+# Rate-limit test (default: 60 req / minute / IP)
+for i in $(seq 1 70); do
+  curl -sS -o /dev/null -w "%{http_code}\n" http://localhost:3000/users
+done | sort | uniq -c
+```
+
+### Simulate an upstream outage (readiness experiment)
+
+```bash
+curl -sS http://localhost:3000/readyz | jq   # expect status: ok
+docker compose stop redis
+curl -sS http://localhost:3000/readyz | jq   # expect status: error, redis: down
+curl -sS -o /dev/null -w "livez: %{http_code}\n" http://localhost:3000/livez  # still 200
+docker compose start redis
 ```
 
 ---
