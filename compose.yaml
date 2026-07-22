@@ -1,13 +1,23 @@
 # ---------------------------------------------------------------------------
 # compose.yaml — Docker Compose file for the whole app stack.
 #
-# `docker compose up --build` brings up:
-#   - postgres      → durable storage for users-service (named volume)
-#   - redis         → key-value cache (service is up; code hooks come in Stage 6)
-#   - users-service → TCP microservice, writes to postgres via TypeORM
-#   - api-gateway   → public HTTP, forwards to users-service
+# Two ways to bring the stack up, controlled by Compose PROFILES:
 #
-# All four services live on a Compose-managed user-defined bridge network
+#   1. Infra only (default) — `docker compose up -d`
+#      Starts:   postgres, redis
+#      Use for:  running the Nest apps on your HOST with `yarn start:*`
+#                (native watcher, native debugger, no image rebuilds).
+#
+#   2. Full stack           — `docker compose --profile app up --build`
+#      Starts:   postgres, redis, users-service, api-gateway
+#      Use for:  smoke-testing the production image path end-to-end,
+#                or when you just want everything running.
+#
+# Profiles: services WITHOUT a `profiles:` key start on every `up`.
+# Services WITH a profile only start when that profile is explicitly
+# requested via `--profile <name>` (or COMPOSE_PROFILES env var).
+#
+# All services live on a Compose-managed user-defined bridge network
 # and reach each other by SERVICE NAME (postgres, redis, users-service,
 # api-gateway). Same pattern as Kubernetes' Service DNS.
 # ---------------------------------------------------------------------------
@@ -22,9 +32,12 @@ services:
     image: postgres:16-alpine
     restart: unless-stopped
     environment:
-      POSTGRES_USER: ${POSTGRES_USER:-postgres}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
-      POSTGRES_DB: ${POSTGRES_DB:-appdb}
+      # The postgres image REQUIRES these three specific var names.
+      # We source them from our unified DB_* vars in .env so the same
+      # names work in Compose, the app container, and local `yarn start`.
+      POSTGRES_USER: ${DB_USER:-postgres}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-postgres}
+      POSTGRES_DB: ${DB_NAME:-appdb}
     volumes:
       # Named volume: Docker manages the storage location; survives
       # `docker compose down`. Only `docker compose down -v` deletes it.
@@ -33,31 +46,27 @@ services:
       # `pg_isready` ships with the postgres image. Exit 0 = accepting
       # connections. Compose polls this until healthy, then releases
       # anything with `depends_on: condition: service_healthy`.
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-appdb}"]
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-postgres} -d ${DB_NAME:-appdb}"]
       interval: 5s
       timeout: 3s
       retries: 10
       start_period: 5s
     ports:
-      # Optional: publish 5432 so you can `psql` from your laptop.
-      # Not needed by other services on this compose network —
+      # Optional: publish postgres to the host so you can `psql` from
+      # your laptop. Not needed for services on the compose network —
       # they reach postgres by name (`postgres:5432`).
-      - "${POSTGRES_PORT:-5432}:5432"
+      - "${DB_HOST_PORT:-5432}:5432"
 
   # ─────────────────────────────────────────────────────────────────────────
-  # redis — key/value store. Behind the `cache` profile so it's OPT-IN
-  # (won't start with a plain `docker compose up`). Two reasons:
-  #  1. Nothing in the app consumes it yet — Stage 6 wires it up.
-  #  2. Many devs already run a local redis on 6379; skipping avoids the
-  #     port conflict.
-  # Bring it up explicitly when needed:
-  #     docker compose --profile cache up -d redis
-  # Or:
-  #     docker compose --profile cache up --build
+  # redis — key/value store. Consumed by api-gateway from Stage 6 onward
+  # (used by the /readyz health check; wired for throttler/cache later).
+  # No `ports:` here — other services on the compose network reach this
+  # redis by name (`redis:6379`). Doesn't conflict with any local redis
+  # you already run on 6379. If you want host access, add
+  # `ports: ["6380:6379"]` (6380 to avoid the collision).
   # ──────────────────────────────────────────────────────────────────────
   redis:
     image: redis:7-alpine
-    profiles: ["cache"]
     restart: unless-stopped
     volumes:
       - redis_data:/data
@@ -67,15 +76,21 @@ services:
       timeout: 3s
       retries: 10
       start_period: 3s
-    # No `ports:` here — other services on the compose network reach
-    # this redis by name (`redis:6379`). If you want host access, add
-    # a `ports: ["6380:6379"]` entry (6380 avoids conflict with your
-    # existing local redis on 6379).
+    ports:
+      # Published so `yarn start:gateway` on the host can reach redis.
+      # Defaults to 6379 (matches app default REDIS_URL). If you already
+      # run a local redis on 6379, set REDIS_HOST_PORT=6380 in .env AND
+      # REDIS_URL=redis://127.0.0.1:6380 so the app talks to the mapped port.
+      # Inside the compose network, services still use redis:6379.
+      - "${REDIS_HOST_PORT:-6379}:6379"
 
   # ─────────────────────────────────────────────────────────────────────────
   # users-service — internal TCP microservice, owns the users table.
   # ─────────────────────────────────────────────────────────────────────────
   users-service:
+    # Opt-in: only starts with `docker compose --profile app up`.
+    # Skipped on plain `docker compose up` so you can run the app on the host.
+    profiles: ["app"]
     build:
       context: .
       dockerfile: apps/users-service/Dockerfile
@@ -86,10 +101,10 @@ services:
       USERS_SERVICE_HOST: 0.0.0.0
       USERS_SERVICE_PORT: "4001"
       DB_HOST: postgres          # Compose service DNS — resolves to postgres container
-      DB_PORT: "5432"
-      DB_USER: ${POSTGRES_USER:-postgres}
-      DB_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
-      DB_NAME: ${POSTGRES_DB:-appdb}
+      DB_PORT: "5432"            # Fixed: postgres inside its container always listens on 5432
+      DB_USER: ${DB_USER:-postgres}
+      DB_PASSWORD: ${DB_PASSWORD:-postgres}
+      DB_NAME: ${DB_NAME:-appdb}
     depends_on:
       postgres:
         # `service_healthy` waits until postgres's healthcheck is green.
@@ -101,6 +116,8 @@ services:
   # api-gateway — public HTTP surface. Only externally-exposed service.
   # ─────────────────────────────────────────────────────────────────────────
   api-gateway:
+    # Opt-in: only starts with `docker compose --profile app up`.
+    profiles: ["app"]
     build:
       context: .
       dockerfile: apps/api-gateway/Dockerfile
@@ -113,11 +130,14 @@ services:
       PORT: "3000"
       USERS_SERVICE_HOST: users-service   # ← Compose service name; DNS-resolved
       USERS_SERVICE_PORT: "4001"
+      REDIS_URL: redis://redis:6379       # ← same DNS pattern; used by /readyz + client
     depends_on:
       users-service:
         # NestClientProxy TCP-connects lazily so `service_started` would
         # be enough. `service_healthy` is stricter — waits until
         # users-service's baked-in HEALTHCHECK is green.
+        condition: service_healthy
+      redis:
         condition: service_healthy
 
 # Named volumes managed by Docker. Persist across `docker compose down`.

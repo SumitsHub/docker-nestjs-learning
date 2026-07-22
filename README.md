@@ -57,6 +57,9 @@ docker-nestjs-learning/
 │   ├── api-gateway/
 │   │   ├── Dockerfile          ← Stage 3 (alpine, prod default)
 │   │   └── Dockerfile.distroless  ← Stage 5 (alternative — distroless nonroot)
+│   │     └── src/
+│   │         ├── health/         ← Stage 6 (/livez, /readyz, redis indicator)
+│   │         └── redis/          ← Stage 6 (global ioredis client + shutdown)
 │   └── users-service/
 │       ├── Dockerfile          ← Stage 3
 │       └── Dockerfile.distroless  ← Stage 5
