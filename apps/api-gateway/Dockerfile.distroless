@@ -68,9 +68,9 @@ EXPOSE 3000
 
 # HEALTHCHECK MUST use exec (JSON-array) form on distroless — no shell
 # is available to interpret shell form. Full path to node is required
-# since $PATH isn't set the same way.
+# since $PATH isn't set the same way. Hits /livez (Stage 6+).
 HEALTHCHECK --interval=30s --timeout=3s --start-period=10s --retries=3 \
-  CMD ["/nodejs/bin/node", "-e", "require('http').get('http://127.0.0.1:3000/', r => process.exit(0)).on('error', () => process.exit(1))"]
+  CMD ["/nodejs/bin/node", "-e", "require('http').get('http://127.0.0.1:3000/livez', r => process.exit(r.statusCode === 200 ? 0 : 1)).on('error', () => process.exit(1))"]
 
 # Distroless nodejs images set ENTRYPOINT to ["/nodejs/bin/node"], so
 # CMD is just the script path — no need to prefix with "node".

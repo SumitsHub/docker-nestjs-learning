@@ -101,12 +101,11 @@ USER node
 EXPOSE 3000
 
 # HEALTHCHECK uses `node -e` instead of curl/wget so we don't have to
-# install another package into the runtime image. Any HTTP response
-# (even 404) means the process is listening → healthy.
-# Stage 6 will replace `/` with a proper /livez that also verifies
-# internal state (downstream reachability, in-flight request count, etc).
+# install another package into the runtime image. Now that Stage 6
+# added a real /livez endpoint, we hit that and REQUIRE HTTP 200 —
+# any other status (or connection error) means unhealthy.
 HEALTHCHECK --interval=30s --timeout=3s --start-period=10s --retries=3 \
-  CMD node -e "require('http').get('http://127.0.0.1:3000/', r => process.exit(0)).on('error', () => process.exit(1))"
+  CMD node -e "require('http').get('http://127.0.0.1:3000/livez', r => process.exit(r.statusCode === 200 ? 0 : 1)).on('error', () => process.exit(1))"
 
 # tini is PID 1 → node is PID 2. tini forwards SIGTERM/SIGINT to node
 # and reaps zombie children. The `--` separates tini's own flags from
