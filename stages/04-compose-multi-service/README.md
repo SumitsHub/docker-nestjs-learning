@@ -337,4 +337,3 @@ git tag -a stage-04-complete -m "Compose orchestration + real Postgres persisten
 git push --follow-tags
 ```
 
-Ping me when it's up, or paste any error you see. Stage 5 (image slimming, distroless, `dive`, `trivy`, multi-arch) is next.

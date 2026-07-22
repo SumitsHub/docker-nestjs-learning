@@ -382,4 +382,3 @@ git tag -a stage-06-complete -m "Cluster-ready: probes, structured logs, gracefu
 git push --follow-tags
 ```
 
-Ping me with results or the exact error text if any step fails. Stage 7 (dev workflows — `compose watch` for hot reload, debugger attach, tests-in-container, TypeORM migrations) is next.

@@ -346,4 +346,3 @@ git tag -a stage-05-complete -m "Image inspected, slimmed, scanned, and supply-c
 git push --follow-tags
 ```
 
-Ping me with the comparison numbers (alpine vs distroless: size + CRITICAL+HIGH count), or if any tool refuses to install. Stage 6 (12-factor + K8s readiness — `/livez`, `/readyz`, graceful shutdown, JSON logs) is next.
